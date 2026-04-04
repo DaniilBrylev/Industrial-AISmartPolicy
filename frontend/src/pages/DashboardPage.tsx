@@ -1,30 +1,51 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { listDepartments } from "@/shared/api/departments";
+import { formatApiError } from "@/shared/api/http";
+import { listPolicyDocuments } from "@/shared/api/policies";
+import { listAllPolicyVersions } from "@/shared/api/policyVersions";
+import { listQuestionnaires } from "@/shared/api/questionnaires";
 import { fetchHealth } from "@/shared/api/health";
+import { PageStatus } from "@/shared/ui/PageStatus";
 
-type Status = "loading" | "ok" | "error";
+type Counts = {
+  departments: number;
+  questionnaires: number;
+  policies: number;
+  versions: number;
+};
 
 export function DashboardPage() {
-  const [status, setStatus] = useState<Status>("loading");
-  const [detail, setDetail] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [counts, setCounts] = useState<Counts | null>(null);
+  const [healthOk, setHealthOk] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoading(true);
+      setError(null);
       try {
-        const data = await fetchHealth();
+        const [h, depts, quests, pols, vers] = await Promise.all([
+          fetchHealth().catch(() => null),
+          listDepartments(),
+          listQuestionnaires(),
+          listPolicyDocuments(),
+          listAllPolicyVersions({ limit: 500 }),
+        ]);
         if (cancelled) return;
-        if (data.status === "ok") {
-          setStatus("ok");
-          setDetail(`${data.service}: ${data.status}`);
-        } else {
-          setStatus("error");
-          setDetail("Неожиданный ответ API");
-        }
-      } catch {
-        if (!cancelled) {
-          setStatus("error");
-          setDetail("Не удалось выполнить запрос");
-        }
+        setHealthOk(h?.status === "ok");
+        setCounts({
+          departments: depts.length,
+          questionnaires: quests.length,
+          policies: pols.length,
+          versions: vers.length,
+        });
+      } catch (e) {
+        if (!cancelled) setError(formatApiError(e));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
@@ -33,49 +54,72 @@ export function DashboardPage() {
   }, []);
 
   return (
-    <main
-      style={{
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: "2.5rem 1.25rem",
-      }}
-    >
-      <header style={{ marginBottom: "2rem" }}>
-        <h1 style={{ margin: "0 0 0.5rem", fontSize: "1.75rem" }}>
-          Политика ИБ промышленного предприятия
-        </h1>
-        <p style={{ margin: 0, color: "#475569" }}>
-          Демонстрационный прототип (Этап 1: каркас системы)
-        </p>
-      </header>
+    <>
+      <h1 className="pageTitle">Сводка</h1>
+      <p className="pageSubtitle">
+        Учебный прототип: формирование политики ИБ промышленного предприятия (с использованием ИИ).
+      </p>
 
-      <section
-        style={{
-          background: "#fff",
-          border: "1px solid #e2e8f0",
-          borderRadius: 12,
-          padding: "1.25rem 1.5rem",
-          boxShadow: "0 1px 2px rgb(15 23 42 / 6%)",
-        }}
-      >
-        <h2 style={{ margin: "0 0 1rem", fontSize: "1.1rem" }}>Состояние backend</h2>
-        {status === "loading" && <p style={{ margin: 0 }}>Проверка…</p>}
-        {status === "ok" && (
-          <p style={{ margin: 0, color: "#15803d", fontWeight: 600 }}>
-            Backend доступен
-            {detail ? ` (${detail})` : ""}
-          </p>
+      <PageStatus loading={loading} error={error} empty={false}>
+        {counts && (
+          <>
+            <div className="panel">
+              <h2 className="panelTitle">Состояние API</h2>
+              <p className="muted" style={{ marginBottom: 8 }}>
+                {healthOk === true && "Сервис доступен."}
+                {healthOk === false && (
+                  <span className="calloutError" style={{ display: "inline-block", padding: "4px 8px" }}>
+                    Нет ответа /health — проверьте backend и proxy.
+                  </span>
+                )}
+              </p>
+              <p className="hint" style={{ margin: 0 }}>
+                Базовый URL:{" "}
+                <code>{import.meta.env.VITE_API_URL || "(относительно dev-сервера → proxy /api)"}</code>
+              </p>
+            </div>
+
+            <div className="panel">
+              <h2 className="panelTitle">Количество записей</h2>
+              <table className="dataTable" style={{ maxWidth: 360 }}>
+                <tbody>
+                  <tr>
+                    <th scope="row">Подразделения</th>
+                    <td>{counts.departments}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Анкеты</th>
+                    <td>{counts.questionnaires}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Документы политики</th>
+                    <td>{counts.policies}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Версии политик (всего)</th>
+                    <td>{counts.versions}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="panel">
+              <h2 className="panelTitle">Быстрые действия</h2>
+              <div className="toolbar">
+                <Link to="/departments" className="btn btnPrimary" style={{ textDecoration: "none" }}>
+                  Создать подразделение
+                </Link>
+                <Link to="/questionnaires" className="btn btnPrimary" style={{ textDecoration: "none" }}>
+                  Создать анкету
+                </Link>
+                <Link to="/questionnaires" className="btn btnSecondary" style={{ textDecoration: "none" }}>
+                  Список анкет
+                </Link>
+              </div>
+            </div>
+          </>
         )}
-        {status === "error" && (
-          <p style={{ margin: 0, color: "#b91c1c", fontWeight: 600 }}>
-            Backend недоступен
-            {detail ? ` — ${detail}` : ""}
-          </p>
-        )}
-        <p style={{ margin: "1rem 0 0", fontSize: "0.9rem", color: "#64748b" }}>
-          Запрос: <code>{import.meta.env.VITE_API_URL || "(не задан VITE_API_URL)"}/api/health</code>
-        </p>
-      </section>
-    </main>
+      </PageStatus>
+    </>
   );
 }
