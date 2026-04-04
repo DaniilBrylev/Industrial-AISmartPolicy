@@ -59,11 +59,12 @@ class AIService:
         При отсутствии ключа или ошибке HTTP — исключение (перехватывается выше).
         """
         if not self._api_key:
-            logger.warning("OpenRouter: OPENROUTER_API_KEY не задан, вызов LLM пропущен")
+            logger.error("OpenRouter API key is missing")
             raise RuntimeError("OpenRouter API key is not configured")
 
         system_prompt = self._truncate(system_prompt, "system_prompt")
         user_prompt = self._truncate(user_prompt, "user_prompt")
+        prompt_len = len(user_prompt)
 
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -83,16 +84,35 @@ class AIService:
         }
 
         logger.info(
-            "OpenRouter request: model=%s user_chars=%s system_chars=%s",
+            "OpenRouter request: model=%s, prompt_len=%d",
             self._model,
-            len(user_prompt),
-            len(system_prompt),
+            prompt_len,
         )
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(self._url, headers=headers, json=payload)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.post(self._url, headers=headers, json=payload)
+        except httpx.RequestError as e:
+            logger.error("OpenRouter network error: %s", e)
+            raise
+
+        status_code = response.status_code
+        try:
             response.raise_for_status()
+        except httpx.HTTPStatusError:
+            preview = (response.text or "")[:500]
+            logger.error(
+                "OpenRouter HTTP error: status=%s body_preview=%s",
+                status_code,
+                preview,
+            )
+            raise
+
+        try:
             data = response.json()
+        except json.JSONDecodeError as e:
+            logger.error("OpenRouter response is not JSON: %s", e)
+            raise RuntimeError("OpenRouter returned non-JSON body") from e
 
         choices = data.get("choices") or []
         if not choices:
@@ -115,8 +135,15 @@ class AIService:
             text = str(content).strip()
 
         if not text:
+            logger.error("OpenRouter: пустой текст ассистента")
             raise RuntimeError("OpenRouter returned blank assistant text")
 
+        tokens_estimated = len(text)
+        logger.info(
+            "OpenRouter response: status=%s, tokens_estimated=%s",
+            status_code,
+            tokens_estimated,
+        )
         return text
 
     async def normalize_text(self, text: str) -> str:
@@ -131,7 +158,7 @@ class AIService:
             out = await self.call_llm(_SYSTEM_IB_EXPERT, user)
             return out if out.strip() else text
         except (RuntimeError, httpx.TimeoutException, httpx.HTTPError) as e:
-            logger.warning("normalize_text fallback: %s", e)
+            logger.error("normalize_text OpenRouter fallback after error: %s", e)
             return text
 
     async def extract_entities(self, text: str) -> dict[str, Any]:
@@ -163,13 +190,45 @@ class AIService:
                 out[k] = v if isinstance(v, list) else []
             return out
         except (RuntimeError, httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError) as e:
-            logger.warning("extract_entities fallback: %s", e)
+            logger.error("extract_entities OpenRouter fallback after error: %s", e)
             return empty
 
     async def generate_policy_section(self, report: dict[str, Any]) -> str:
         """Один раздел/фрагмент политики ИБ по структурированному отчёту анализа."""
         if not report:
             return "недостаточно данных"
+
+        section = str(report.get("section") or "")
+        raw_items = report.get("items")
+        items = raw_items if isinstance(raw_items, list) else []
+
+        def _items_as_bullets() -> str:
+            """Детерминированный текст для fallback (данные из analysis_result)."""
+            lines = [f"- {str(x).strip()}" for x in items if str(x).strip()]
+            return "\n".join(lines) if lines else "недостаточно данных"
+
+        # Списковые разделы: во входе уже есть пункты из analysis_result — нельзя отвечать «недостаточно данных»
+        if items:
+            draft_txt = str(report.get("draft") or "").strip()
+            bullets = _items_as_bullets()
+            user = (
+                f"Раздел проекта политики ИБ: «{section}».\n"
+                "Ниже перечислены утверждённые пункты из отчёта анализа (analysis_result). "
+                "Переформулируй их официальным деловым языком в виде маркированного списка: "
+                "каждый пункт с новой строки, начинай строку с «- ». Сохрани все факты: идентификаторы активов, "
+                "коды рисков, уровни критичности и формулировки требований. Не удаляй и не выдумывай сущности.\n"
+                "Запрещено отвечать «недостаточно данных» — исходные пункты уже заданы.\n\n"
+                "Пункты:\n"
+                f"{self._truncate(bullets, 'generate_policy_section_items')}"
+            )
+            if draft_txt:
+                user += f"\n\nДополнительный черновой контекст:\n{self._truncate(draft_txt, 'generate_policy_section_draft')}"
+            try:
+                out = await self.call_llm(_SYSTEM_IB_EXPERT, user)
+                return out.strip() or bullets
+            except (RuntimeError, httpx.TimeoutException, httpx.HTTPError) as e:
+                logger.error("generate_policy_section (items) OpenRouter fallback: %s", e)
+                return bullets
 
         try:
             report_json = json.dumps(
@@ -182,20 +241,18 @@ class AIService:
             return "недостаточно данных"
 
         user = (
-            "На основе следующего JSON-отчёта анализа (активы, риски, требования, меры) "
-            "сформируй один связный раздел проекта политики информационной безопасности "
-            "промышленного предприятия.\n"
-            "Требования: нумерованные или маркированные подпункты, официальный стиль, без «воды», "
-            "без выдуманных организаций и нормативных ссылок, если их нет во входе. "
-            "Если отчёт пустой или неинформативен — выведи только: недостаточно данных.\n\n"
-            "Отчёт:\n"
+            "На основе следующего JSON (черновик раздела и контекст) сформируй один связный текст "
+            "раздела проекта политики информационной безопасности промышленного предприятия.\n"
+            "Стиль: официальный, без «воды», без выдуманных организаций и нормативных ссылок, если их нет во входе.\n"
+            "Если во входных данных нет содержания для этого раздела — выведи только: недостаточно данных.\n\n"
+            "Данные:\n"
             f"{self._truncate(report_json, 'generate_policy_section')}"
         )
         try:
             out = await self.call_llm(_SYSTEM_IB_EXPERT, user)
             return out.strip() or "недостаточно данных"
         except (RuntimeError, httpx.TimeoutException, httpx.HTTPError) as e:
-            logger.warning("generate_policy_section fallback: %s", e)
+            logger.error("generate_policy_section OpenRouter fallback: %s", e)
             return "недостаточно данных"
 
     async def explain_decision(self, asset: dict[str, Any], risk: dict[str, Any]) -> str:
@@ -224,7 +281,7 @@ class AIService:
             out = await self.call_llm(_SYSTEM_IB_EXPERT, user)
             return out.strip() or "недостаточно данных"
         except (RuntimeError, httpx.TimeoutException, httpx.HTTPError) as e:
-            logger.warning("explain_decision fallback: %s", e)
+            logger.error("explain_decision OpenRouter fallback after error: %s", e)
             return "недостаточно данных"
 
 

@@ -4,6 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """
+    Переменные окружения имеют приоритет над env_file (pydantic-settings).
+    В Docker ключи OpenRouter задайте через compose environment / env_file в корне проекта.
+    """
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -15,7 +20,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg2://aisec:aisec_secret_change_me@localhost:5432/aisec_policy"
 
-    # OpenRouter (https://openrouter.ai) — опционально; без ключа AI-методы делают fallback
+    # OpenRouter — env: OPENROUTER_API_KEY, OPENROUTER_MODEL
     openrouter_api_key: str = ""
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1/chat/completions"

@@ -6,6 +6,7 @@ CRUD сущностей PolicyDocument см. policy_document_service.
 
 from __future__ import annotations
 
+import copy
 import html
 import json
 import logging
@@ -19,6 +20,114 @@ from app.services.ai_service import AIService
 logger = logging.getLogger(__name__)
 
 _BULLET_LINE = re.compile(r"^\s*[-*•]\s+(.+)$")
+
+# Ответы LLM, которые нельзя подставлять вместо фактических данных из analysis_result
+_INSUFFICIENT_RE = re.compile(
+    r"^\s*«?\s*недостаточно\s+данных\s*»?\s*\.?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _line_without_bullet_prefix(ln: str) -> str:
+    s = ln.strip()
+    m = _BULLET_LINE.match(s)
+    if m:
+        return m.group(1).strip()
+    if re.match(r"^\d+[\.)]\s+", s):
+        return re.sub(r"^\d+[\.)]\s+", "", s).strip()
+    return s
+
+
+def _is_insufficient_llm_response(text: str) -> bool:
+    """True, если модель вернула только шаблонную отбивку без содержания."""
+    if not (text or "").strip():
+        return True
+    lines = [ln for ln in text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return True
+    for ln in lines:
+        core = _line_without_bullet_prefix(ln)
+        if not core:
+            continue
+        if _INSUFFICIENT_RE.match(core) is None:
+            return False
+    return True
+
+
+def _list_len(val: Any) -> int:
+    return len(val) if isinstance(val, list) else 0
+
+
+def normalize_analysis_result(raw: Any) -> dict[str, Any]:
+    """
+    Приводит значение response_data['analysis_result'] к плоскому dict для генерации политики.
+
+    Поддерживает:
+    - JSON-строку вместо объекта;
+    - вложенный объект report (как в QuestionnaireAnalyzeResponse: {\"report\": {...}});
+    - опционально camelCase classifiedAssets → classified_assets.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return {}
+        try:
+            raw = json.loads(s)
+        except json.JSONDecodeError:
+            logger.warning("analysis_result: не удалось разобрать JSON-строку")
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    base = copy.deepcopy(raw)
+    rep = base.get("report")
+    if isinstance(rep, dict):
+        for k in (
+            "assets",
+            "classified_assets",
+            "risks",
+            "requirements",
+            "measures",
+            "links",
+            "warnings",
+        ):
+            if k in rep:
+                base[k] = rep[k]
+
+    if "classified_assets" not in base and isinstance(base.get("classifiedAssets"), list):
+        base["classified_assets"] = base["classifiedAssets"]
+
+    logger.info(
+        "normalize_analysis_result: len(assets)=%s len(classified_assets)=%s len(risks)=%s "
+        "len(requirements)=%s len(measures)=%s",
+        _list_len(base.get("assets")),
+        _list_len(base.get("classified_assets")),
+        _list_len(base.get("risks")),
+        _list_len(base.get("requirements")),
+        _list_len(base.get("measures")),
+    )
+    return base
+
+
+def transform_analysis_to_policy_sections(
+    normalized_analysis: dict[str, Any],
+    policy_svc: PolicyService | None = None,
+) -> dict[str, list[str]]:
+    """
+    Плоские списки строк для разделов политики (вход — результат normalize_analysis_result).
+
+    Маппинг: assets, classified_assets → classification, risks, requirements, measures.
+    """
+    svc = policy_svc or PolicyService()
+    return {
+        "assets": svc._lines_from_report_list(normalized_analysis.get("assets"), "asset"),
+        "classification": svc._lines_classified(normalized_analysis.get("classified_assets")),
+        "risks": svc._lines_from_report_list(normalized_analysis.get("risks"), "risk"),
+        "requirements": svc._string_list(normalized_analysis.get("requirements")),
+        "measures": svc._string_list(normalized_analysis.get("measures")),
+    }
 
 
 class PolicyService:
@@ -61,11 +170,13 @@ class PolicyService:
             f"Дополнительные сведения: {notes_str or 'не указаны'}."
         )
 
-        assets_lines = self._lines_from_report_list(analysis_result.get("assets"), "asset")
-        class_lines = self._lines_classified(analysis_result.get("classified_assets"))
-        risk_lines = self._lines_from_report_list(analysis_result.get("risks"), "risk")
-        req_lines = self._string_list(analysis_result.get("requirements"))
-        meas_lines = self._string_list(analysis_result.get("measures"))
+        analysis_norm = normalize_analysis_result(analysis_result)
+        sections = transform_analysis_to_policy_sections(analysis_norm, self)
+        assets_lines = list(sections["assets"])
+        class_lines = list(sections["classification"])
+        risk_lines = list(sections["risks"])
+        req_lines = list(sections["requirements"])
+        meas_lines = list(sections["measures"])
 
         if not assets_lines and isinstance(response_data.get("assets"), list):
             assets_lines = self._lines_from_raw_assets(response_data["assets"])
@@ -75,14 +186,17 @@ class PolicyService:
             "определяются локальными актами на основе результатов анализа рисков."
         )
 
+        def _or_missing(lines: list[str]) -> list[str]:
+            return lines if lines else ["данные отсутствуют"]
+
         return {
             "general": general,
             "scope": scope,
-            "assets": assets_lines,
-            "classification": class_lines,
-            "risks": risk_lines,
-            "requirements": req_lines,
-            "measures": meas_lines,
+            "assets": _or_missing(assets_lines),
+            "classification": _or_missing(class_lines),
+            "risks": _or_missing(risk_lines),
+            "requirements": _or_missing(req_lines),
+            "measures": _or_missing(meas_lines),
             "conclusion": conclusion,
         }
 
@@ -162,9 +276,13 @@ class PolicyService:
             }
             try:
                 generated = await ai_service.generate_policy_section(payload)
-                out[key] = (generated or draft).strip() or draft
+                g = (generated or "").strip()
+                if _is_insufficient_llm_response(g):
+                    out[key] = draft
+                else:
+                    out[key] = g or draft
             except Exception as e:  # noqa: BLE001
-                logger.warning("AI section %s failed: %s", key, e)
+                logger.error("AI section %s failed, using draft: %s", key, e)
                 out[key] = draft
 
         for key in list_keys:
@@ -180,13 +298,13 @@ class PolicyService:
                 generated = await ai_service.generate_policy_section(payload)
                 out[key] = self._text_to_bullet_list(generated, fallback=items)
             except Exception as e:  # noqa: BLE001
-                logger.warning("AI section %s failed: %s", key, e)
+                logger.error("AI section %s failed, using structure items: %s", key, e)
                 out[key] = list(items)
 
         return out
 
     def _text_to_bullet_list(self, text: str, *, fallback: list[str]) -> list[str]:
-        if not (text or "").strip():
+        if not (text or "").strip() or _is_insufficient_llm_response(text):
             return list(fallback)
         lines = []
         for line in text.splitlines():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -155,6 +156,12 @@ def save_questionnaire_response(
     )
 
     stored = payload.response_data.to_stored_dict(revision_fb)
+    # Результат анализа не входит в QuestionnaireResponseDataPayload; без слияния он затирался бы при каждом PUT.
+    if existing and isinstance(existing.response_data, dict):
+        prev_ar = existing.response_data.get("analysis_result")
+        if isinstance(prev_ar, dict) and prev_ar:
+            stored["analysis_result"] = copy.deepcopy(prev_ar)
+
     val_ok, val_errs = validate_response_structure(stored)
     if not val_ok:
         return "validation_error", None, val_errs

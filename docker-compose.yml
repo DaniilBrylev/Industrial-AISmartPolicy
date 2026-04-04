@@ -20,8 +20,12 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    env_file:
+      - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://aisec:aisec_secret_change_me@db:5432/aisec_policy}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:

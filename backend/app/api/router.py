@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import health
+from app.api.debug import router as debug_router
 from app.api.analysis import router as analysis_router
 from app.api.assets import router as assets_router
 from app.api.business_processes import router as business_processes_router
@@ -15,6 +16,7 @@ from app.api.versioning import router as versioning_router
 api_router = APIRouter()
 
 api_router.include_router(health.router, prefix="")
+api_router.include_router(debug_router)
 api_router.include_router(files_router)
 api_router.include_router(departments_router)
 api_router.include_router(questionnaires_router)

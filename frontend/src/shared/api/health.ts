@@ -3,6 +3,7 @@ import { apiUrl } from "@/shared/api/client";
 export type HealthResponse = {
   status: string;
   service: string;
+  llm_enabled?: boolean;
 };
 
 export async function fetchHealth(): Promise<HealthResponse> {

@@ -23,7 +23,7 @@ from app.schemas.validation import ValidationResult
 from app.services import analysis_service
 from app.services import policy_document_service
 from app.services.ai_service import AIService, get_ai_service
-from app.services.policy_service import PolicyService, get_policy_service
+from app.services.policy_service import PolicyService, get_policy_service, normalize_analysis_result
 from app.services import questionnaire_collection_service as qc
 from app.services import questionnaire_service
 from app.services import validation_service
@@ -177,9 +177,8 @@ async def generate_questionnaire_policy(
     if not isinstance(rd, dict):
         rd = {}
     ar = rd.get("analysis_result")
-    analysis_dict = ar if isinstance(ar, dict) else {}
-
-    structure = policy_svc.build_policy_structure(rd, analysis_dict)
+    analysis_dict = normalize_analysis_result(ar)
+    structure = policy_svc.build_policy_structure(rd, ar)
     try:
         policy = await policy_svc.generate_policy_text(structure, ai)
     except Exception as e:  # noqa: BLE001
