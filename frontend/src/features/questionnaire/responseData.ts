@@ -8,6 +8,14 @@ export type AssetRow = {
   asset_type: string;
   owner: string;
   criticality: string;
+  /** OT: зона (VLAN / сегмент) */
+  network_zone?: string;
+  vendor?: string;
+  protocols?: string;
+  supports_mfa?: boolean;
+  supports_patching?: boolean;
+  availability_class?: string;
+  safety_critical?: boolean;
 };
 
 export type ProcessRow = {
@@ -83,12 +91,27 @@ export function parseResponseDataFromServer(
       if (item && typeof item === "object" && !Array.isArray(item)) {
         const o = item as Record<string, unknown>;
         const owner = o.owner ?? o.owner_name;
+        const parseOptBool = (v: unknown): boolean | undefined => {
+          if (v === true || v === false) return v;
+          const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+          if (s === "true" || s === "yes" || s === "1") return true;
+          if (s === "false" || s === "no" || s === "0") return false;
+          return undefined;
+        };
         assets.push({
           id: String(o.id ?? ""),
           name: String(o.name ?? ""),
           asset_type: String(o.asset_type ?? ""),
           owner: typeof owner === "string" ? owner : String(owner ?? ""),
           criticality: String(o.criticality ?? "").toLowerCase(),
+          network_zone: o.network_zone != null ? String(o.network_zone) : "",
+          vendor: o.vendor != null ? String(o.vendor) : "",
+          protocols: o.protocols != null ? String(o.protocols) : "",
+          supports_mfa: parseOptBool(o.supports_mfa),
+          supports_patching: parseOptBool(o.supports_patching),
+          availability_class:
+            o.availability_class != null ? String(o.availability_class) : "",
+          safety_critical: parseOptBool(o.safety_critical),
         });
       }
     }
@@ -133,13 +156,23 @@ export function formToSavePayload(form: FormResponseData): Record<string, unknow
 
   return {
     department_profile: form.department_profile,
-    assets: form.assets.map((a) => ({
-      id: a.id.trim(),
-      name: a.name,
-      asset_type: a.asset_type,
-      owner: a.owner,
-      criticality: a.criticality,
-    })),
+    assets: form.assets.map((a) => {
+      const row: Record<string, unknown> = {
+        id: a.id.trim(),
+        name: a.name,
+        asset_type: a.asset_type,
+        owner: a.owner,
+        criticality: a.criticality,
+      };
+      if (a.network_zone?.trim()) row.network_zone = a.network_zone.trim();
+      if (a.vendor?.trim()) row.vendor = a.vendor.trim();
+      if (a.protocols?.trim()) row.protocols = a.protocols.trim();
+      if (a.supports_mfa !== undefined) row.supports_mfa = a.supports_mfa;
+      if (a.supports_patching !== undefined) row.supports_patching = a.supports_patching;
+      if (a.availability_class?.trim()) row.availability_class = a.availability_class.trim();
+      if (a.safety_critical !== undefined) row.safety_critical = a.safety_critical;
+      return row;
+    }),
     business_processes: form.business_processes.map((p) => ({
       name: p.name,
       used_asset_ids: usedIds(p.used_asset_ids),

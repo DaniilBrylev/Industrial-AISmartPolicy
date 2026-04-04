@@ -7,6 +7,10 @@ export function listDepartments(): Promise<DepartmentRead[]> {
   return apiJson<DepartmentRead[]>(base);
 }
 
+export function getDepartment(id: number): Promise<DepartmentRead> {
+  return apiJson<DepartmentRead>(`${base}/${id}`);
+}
+
 export function createDepartment(body: DepartmentCreate): Promise<DepartmentRead> {
   return apiJson<DepartmentRead>(base, { method: "POST", json: body });
 }

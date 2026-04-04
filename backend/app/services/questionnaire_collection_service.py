@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -17,7 +18,11 @@ from app.schemas.questionnaire_response_data import (
     QuestionnaireResponseDataPayload,
 )
 
+from app.services.analysis_source_hash import compute_analysis_source_hash
+from app.services.policy_workflow_service import merge_workflow_fields_into_stored
 from app.services.questionnaire_service import get_questionnaire
+
+logger = logging.getLogger(__name__)
 
 Outcome = Literal[
     "ok",
@@ -156,11 +161,35 @@ def save_questionnaire_response(
     )
 
     stored = payload.response_data.to_stored_dict(revision_fb)
+    existing_rd = existing.response_data if existing and isinstance(existing.response_data, dict) else None
+    merge_workflow_fields_into_stored(stored, existing_rd)
     # Результат анализа не входит в QuestionnaireResponseDataPayload; без слияния он затирался бы при каждом PUT.
-    if existing and isinstance(existing.response_data, dict):
-        prev_ar = existing.response_data.get("analysis_result")
-        if isinstance(prev_ar, dict) and prev_ar:
-            stored["analysis_result"] = copy.deepcopy(prev_ar)
+    prev_ar: dict[str, Any] | None = None
+    if existing_rd:
+        raw_prev = existing_rd.get("analysis_result")
+        if isinstance(raw_prev, dict) and raw_prev:
+            prev_ar = raw_prev
+            stored["analysis_result"] = copy.deepcopy(raw_prev)
+
+    new_source_hash = compute_analysis_source_hash(stored)
+    old_hash: str | None = None
+    if prev_ar:
+        meta = prev_ar.get("analysis_meta")
+        if isinstance(meta, dict):
+            h = meta.get("source_hash")
+            if isinstance(h, str) and h.strip():
+                old_hash = h.strip()
+    if old_hash:
+        if new_source_hash != old_hash:
+            stored["analysis_stale"] = True
+            logger.info(
+                "analysis stale detected questionnaire_id=%s (tracked sections changed)",
+                questionnaire_id,
+            )
+        else:
+            stored["analysis_stale"] = False
+    else:
+        stored["analysis_stale"] = False
 
     val_ok, val_errs = validate_response_structure(stored)
     if not val_ok:

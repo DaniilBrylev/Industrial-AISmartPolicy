@@ -1,5 +1,8 @@
 import { ApiError, apiJson } from "@/shared/api/http";
 import type {
+  ExplanationPayload,
+  ExplanationRequestBody,
+  QuestionnaireAnalysisDiffResponse,
   QuestionnaireAnalyzeResponse,
   QuestionnaireCreate,
   QuestionnairePolicyGenerateResponse,
@@ -8,7 +11,11 @@ import type {
   QuestionnaireResponseSaveBody,
   QuestionnaireStatusChangeResponse,
   QuestionnaireUpdate,
+  QuestionnaireWorkflowStateRead,
   ValidationResult,
+  WorkflowActionRequestBody,
+  WorkflowActionResponse,
+  WorkflowRole,
 } from "@/shared/api/types";
 
 const base = "/api/questionnaires";
@@ -75,6 +82,40 @@ export function validateQuestionnaire(id: number): Promise<ValidationResult> {
 export function analyzeQuestionnaire(id: number): Promise<QuestionnaireAnalyzeResponse> {
   return apiJson<QuestionnaireAnalyzeResponse>(`${base}/${id}/analyze`, {
     method: "POST",
+  });
+}
+
+export function getQuestionnaireAnalysisDiff(
+  id: number,
+): Promise<QuestionnaireAnalysisDiffResponse> {
+  return apiJson<QuestionnaireAnalysisDiffResponse>(`${base}/${id}/analysis-diff`);
+}
+
+export function postQuestionnaireExplanation(
+  id: number,
+  body: ExplanationRequestBody,
+): Promise<ExplanationPayload> {
+  return apiJson<ExplanationPayload>(`${base}/${id}/explanation`, {
+    method: "POST",
+    json: body,
+  });
+}
+
+export function getQuestionnaireWorkflow(
+  id: number,
+  role?: WorkflowRole | null,
+): Promise<QuestionnaireWorkflowStateRead> {
+  const q = role != null ? `?role=${encodeURIComponent(role)}` : "";
+  return apiJson<QuestionnaireWorkflowStateRead>(`${base}/${id}/workflow${q}`);
+}
+
+export function postQuestionnaireWorkflowAction(
+  id: number,
+  body: WorkflowActionRequestBody,
+): Promise<WorkflowActionResponse> {
+  return apiJson<WorkflowActionResponse>(`${base}/${id}/workflow/action`, {
+    method: "POST",
+    json: body,
   });
 }
 

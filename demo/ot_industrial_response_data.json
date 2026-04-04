@@ -1,0 +1,115 @@
+{
+  "department_profile": {
+    "description": "Цех гидравлических линий: АСУ ТП, технологический сегмент OT (VLAN 20).",
+    "manager_name": "И. Петров",
+    "contact_info": "цех-01@plant.local"
+  },
+  "assets": [
+    {
+      "id": "plc-l2",
+      "name": "ПЛК Siemens S7-1515 (линия 2)",
+      "asset_type": "PLC / контроллер",
+      "owner": "АСУТП цеха",
+      "criticality": "high",
+      "network_zone": "ot_production_vlan20",
+      "vendor": "Siemens",
+      "protocols": "Profinet, OPC UA",
+      "supports_mfa": false,
+      "supports_patching": false,
+      "availability_class": "high",
+      "safety_critical": true
+    },
+    {
+      "id": "sensor-pt-01",
+      "name": "Датчик давления PT-01",
+      "asset_type": "Датчик / полевое устройство",
+      "owner": "АСУТП цеха",
+      "criticality": "medium",
+      "network_zone": "ot_production_vlan20",
+      "vendor": "Endress+Hauser",
+      "protocols": "HART, Profinet",
+      "supports_mfa": false,
+      "supports_patching": false,
+      "availability_class": "medium",
+      "safety_critical": false
+    },
+    {
+      "id": "hmi-op-01",
+      "name": "Операторская станция WinCC",
+      "asset_type": "Операторская станция / HMI",
+      "owner": "Цех",
+      "criticality": "high",
+      "network_zone": "ot_production_vlan20",
+      "vendor": "Siemens",
+      "protocols": "OPC UA",
+      "supports_mfa": true,
+      "supports_patching": false,
+      "availability_class": "high",
+      "safety_critical": false
+    },
+    {
+      "id": "scada-01",
+      "name": "SCADA-сервер цеха",
+      "asset_type": "SCADA-сервер",
+      "owner": "АСУТП",
+      "criticality": "high",
+      "network_zone": "ot_dmz",
+      "protocols": "OPC UA, Modbus TCP",
+      "supports_mfa": true,
+      "supports_patching": true,
+      "availability_class": "high",
+      "safety_critical": false
+    },
+    {
+      "id": "net-ot-core",
+      "name": "Технологический сегмент OT",
+      "asset_type": "Технологическая сеть / сегмент",
+      "owner": "Сетевой отдел",
+      "criticality": "critical",
+      "network_zone": "ot_production_vlan20",
+      "vendor": "Cisco IE",
+      "protocols": "Profinet",
+      "supports_mfa": false,
+      "supports_patching": true,
+      "availability_class": "critical",
+      "safety_critical": true
+    },
+    {
+      "id": "fs-corp-01",
+      "name": "Файловый сервер (IT)",
+      "asset_type": "Windows Server",
+      "owner": "ИТ отдел",
+      "criticality": "medium",
+      "network_zone": "corp_lan",
+      "supports_mfa": true,
+      "supports_patching": true,
+      "availability_class": "medium",
+      "safety_critical": false
+    }
+  ],
+  "business_processes": [
+    {
+      "name": "Гидравлический пресс линии 2",
+      "used_asset_ids": ["plc-l2", "sensor-pt-01", "hmi-op-01", "scada-01", "net-ot-core"]
+    }
+  ],
+  "access_matrix": [
+    {
+      "resource": "VPN подрядчика",
+      "note": "доступ к инженерной / операторской станции по jump host"
+    }
+  ],
+  "contractors": [
+    {
+      "name": "ООО «Автоматика-Плюс»",
+      "details": "удалённая настройка ПЛК по VPN"
+    }
+  ],
+  "incidents": [
+    {
+      "summary": "НСД в технологическую сеть",
+      "details": "ноутбук в сегменте OT"
+    }
+  ],
+  "additional_notes": "Демо OT для Industrial AISmartPolicy."
+}

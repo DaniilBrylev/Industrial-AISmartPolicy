@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # OpenRouter — env: OPENROUTER_API_KEY, OPENROUTER_MODEL
     openrouter_api_key: str = ""
     openrouter_model: str = "openai/gpt-4o-mini"
+
+    # Гибридный анализ: обогащение отчёта ИИ (объяснения), ядро rule-based не меняется
+    analysis_use_llm: bool = False
     openrouter_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
     openrouter_timeout_seconds: float = 60.0
     openrouter_max_input_chars: int = 16000

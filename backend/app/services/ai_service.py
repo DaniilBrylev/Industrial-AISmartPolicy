@@ -284,6 +284,204 @@ class AIService:
             logger.error("explain_decision OpenRouter fallback after error: %s", e)
             return "недостаточно данных"
 
+    async def explain_risk_for_analysis(
+        self,
+        asset_context: dict[str, Any],
+        risk_context: dict[str, Any],
+    ) -> str:
+        """
+        Объяснение назначения риска активу для ai_enrichment (только текст; факты из контекста).
+        При ошибке API — исключение (обрабатывает вызывающий слой).
+        """
+        try:
+            payload = json.dumps(
+                {"asset_context": asset_context, "risk": risk_context},
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        except (TypeError, ValueError) as e:
+            raise RuntimeError("Cannot serialize risk explanation payload") from e
+
+        user = (
+            "Ты эксперт по информационной безопасности промышленных предприятий. "
+            "Объясни деловым языком за 2–5 предложений, почему указанный риск считается применимым к данному активу. "
+            "Опирайся ТОЛЬКО на поля JSON (среда IT/OT, критичность, код и название риска, severity, примечания rule-engine). "
+            "Не добавляй новых активов, рисков и мер; не меняй коды и оценки.\n\n"
+            f"{self._truncate(payload, 'explain_risk_for_analysis')}"
+        )
+        return (await self.call_llm(_SYSTEM_IB_EXPERT, user)).strip()
+
+    async def explain_analysis_link(self, link_context: dict[str, Any]) -> str:
+        """
+        Объяснение связи актив → риск → требование → мера для ai_enrichment.
+        """
+        try:
+            payload = json.dumps(link_context, ensure_ascii=False, indent=2, default=str)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError("Cannot serialize link explanation payload") from e
+
+        user = (
+            "Объясни за 2–4 предложения, почему для данного актива указанная мера защиты логично следует из "
+            "связки «риск — требование». Используй только факты из JSON; не выдумывай сущности.\n\n"
+            f"{self._truncate(payload, 'explain_analysis_link')}"
+        )
+        return (await self.call_llm(_SYSTEM_IB_EXPERT, user)).strip()
+
+    async def summarize_questionnaire_notes(self, combined_notes: str) -> str:
+        """Краткое резюме текстовых секций анкеты; только факты из переданного текста."""
+        if not (combined_notes or "").strip():
+            return ""
+        user = (
+            "Сделай краткое нейтральное резюме для руководителя (не более 8 предложений). "
+            "Используй только сведения из текста ниже; не добавляй фактов, которых в тексте нет.\n\n"
+            f"{self._truncate(combined_notes.strip(), 'summarize_questionnaire_notes')}"
+        )
+        return (await self.call_llm(_SYSTEM_IB_EXPERT, user)).strip()
+
+    async def normalize_questionnaire_fragments(
+        self,
+        fragments: list[dict[str, str]],
+    ) -> tuple[list[dict[str, str]], bool]:
+        """
+        Нормализация текстовых фрагментов анкеты одним вызовом LLM (деловой стиль, без выдуманных фактов).
+
+        fragments: элементы {"source_field": "...", "text": "..."}.
+        Возвращает список {"source_field", "normalized"} и флаг успеха парсинга ответа.
+        """
+        if not fragments:
+            return [], True
+        try:
+            payload = json.dumps(fragments, ensure_ascii=False, indent=2, default=str)
+        except (TypeError, ValueError):
+            return [], False
+
+        user = (
+            "Нормализуй каждый текстовый фрагмент анкеты по информационной безопасности:\n"
+            "- убери лишний шум (мусорные символы, повторы), сохрани все факты и имена;\n"
+            "- единый официальный стиль, без новых сущностей и предположений;\n"
+            "- не сокращай до «недостаточно данных», если во входе есть текст.\n"
+            "Верни ТОЛЬКО один JSON-объект без markdown:\n"
+            '{"fragments":[{"source_field":"<как во входе>","normalized":"<текст>"}]}\n'
+            "Порядок и значения source_field должны совпадать с входом; по одному объекту на фрагмент.\n\n"
+            "Входные фрагменты:\n"
+            f"{self._truncate(payload, 'normalize_questionnaire_fragments')}"
+        )
+        try:
+            raw = await self.call_llm(_SYSTEM_IB_EXPERT, user)
+            cleaned = _strip_json_fence(raw)
+            parsed = json.loads(cleaned)
+            if not isinstance(parsed, dict):
+                return [], False
+            out_raw = parsed.get("fragments")
+            if not isinstance(out_raw, list):
+                return [], False
+            out: list[dict[str, str]] = []
+            for row in out_raw:
+                if not isinstance(row, dict):
+                    continue
+                sf = str(row.get("source_field") or "").strip()
+                norm = str(row.get("normalized") or "").strip()
+                if sf:
+                    out.append({"source_field": sf, "normalized": norm})
+            return (out, True) if out else ([], False)
+        except (RuntimeError, httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError, OSError) as e:
+            logger.error("normalize_questionnaire_fragments failed: %s", e)
+            return [], False
+
+    async def extract_questionnaire_entities(self, labeled_text: str) -> list[dict[str, Any]]:
+        """
+        NER по размеченному тексту анкеты. Только сущности из текста; тип из закрытого набора.
+        """
+        if not (labeled_text or "").strip():
+            return []
+        user = (
+            "Извлеки именованные сущности ТОЛЬКО из текста ниже. Не добавляй факты, которых нет в тексте.\n"
+            "Для каждой сущности укажи:\n"
+            '- type: одно из: asset, system, process, role, incident, contractor, department, '
+            "requirement, network_zone, protective_measure, standard, plc, scada, hmi, sensor, "
+            "operator_station, engineering_station, industrial_network, vpn, control_cabinet, "
+            "industrial_protocol (Modbus/OPC/Profinet и т.п.) — иначе other;\n"
+            '- value: краткая строка (имя/название);\n'
+            '- source_field: идентификатор фрагмента из маркера <<<SOURCE:...>>> ближе всего к упоминанию '
+            "(если неясно — пустая строка).\n"
+            "Верни ТОЛЬКО JSON без markdown: {\"entities\": [...] }\n\n"
+            f"{self._truncate(labeled_text.strip(), 'extract_questionnaire_entities')}"
+        )
+        try:
+            raw = await self.call_llm(_SYSTEM_IB_EXPERT, user)
+            cleaned = _strip_json_fence(raw)
+            parsed = json.loads(cleaned)
+            if not isinstance(parsed, dict):
+                return []
+            items = parsed.get("entities")
+            if not isinstance(items, list):
+                return []
+            out: list[dict[str, Any]] = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                t = str(it.get("type") or "other").strip() or "other"
+                v = str(it.get("value") or "").strip()
+                if not v:
+                    continue
+                sf = str(it.get("source_field") or "").strip()
+                out.append({"type": t, "value": v[:2000], "source_field": sf[:500]})
+            return out
+        except (RuntimeError, httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError, OSError) as e:
+            logger.error("extract_questionnaire_entities failed: %s", e)
+            return []
+
+    async def extract_relations_from_text(self, labeled_text: str) -> list[dict[str, Any]]:
+        """
+        Извлечение бинарных отношений из размеченного текста (RE). Не подменяет rule-based links.
+        """
+        if not (labeled_text or "").strip():
+            return []
+        user = (
+            "Извлеки явные или логически выводимые отношения между сущностями ТОЛЬКО из текста ниже.\n"
+            "Примеры формулировок relation: связан_с_процессом, имеет_доступ_к, затрагивает_актив, "
+            "доступ_роли_к_ресурсу, в_контуре_IT_OT, в_OT_контуре, мера_относится_к_риску, "
+            "устройство_в_сети, подрядчик_имеет_доступ_к, контроллер_управляет_процессом, "
+            "датчик_на_участке (кратко, на русском или английском).\n"
+            "Не выдумывай связи, которых нет в тексте.\n"
+            "Верни ТОЛЬКО JSON без markdown:\n"
+            '{"relations":[{"subject":"...","relation":"...","object":"...","source_field":"..."}]}\n'
+            "source_field — маркер <<<SOURCE:...>>> или пусто.\n\n"
+            f"{self._truncate(labeled_text.strip(), 'extract_relations_from_text')}"
+        )
+        try:
+            raw = await self.call_llm(_SYSTEM_IB_EXPERT, user)
+            cleaned = _strip_json_fence(raw)
+            parsed = json.loads(cleaned)
+            if not isinstance(parsed, dict):
+                return []
+            items = parsed.get("relations")
+            if not isinstance(items, list):
+                return []
+            out: list[dict[str, Any]] = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                subj = str(it.get("subject") or "").strip()
+                rel = str(it.get("relation") or "").strip()
+                obj = str(it.get("object") or "").strip()
+                if not (subj and rel and obj):
+                    continue
+                sf = str(it.get("source_field") or "").strip()
+                out.append(
+                    {
+                        "subject": subj[:2000],
+                        "relation": rel[:500],
+                        "object": obj[:2000],
+                        "source_field": sf[:500],
+                    }
+                )
+            return out
+        except (RuntimeError, httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError, OSError) as e:
+            logger.error("extract_relations_from_text failed: %s", e)
+            return []
+
 
 def _strip_json_fence(raw: str) -> str:
     s = raw.strip()

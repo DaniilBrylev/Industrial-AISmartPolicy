@@ -1,4 +1,5 @@
 import logging
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -14,19 +15,35 @@ from app.schemas.questionnaire_collection import (
     QuestionnaireStatusChangeResponse,
 )
 
-from app.schemas.analysis_report import QuestionnaireAnalyzeResponse
+from app.schemas.analysis_report import (
+    AnalysisDiffPayload,
+    AnalysisReport,
+    ExplanationPayload,
+    ExplanationRequest,
+    QuestionnaireAnalysisDiffResponse,
+    QuestionnaireAnalyzeResponse,
+)
 from app.schemas.policy import (
     QuestionnairePolicyGenerateResponse,
     QuestionnairePolicyVersioningInfo,
 )
+from app.schemas.policy_workflow import (
+    QuestionnaireWorkflowStateRead,
+    WorkflowActionRequest,
+    WorkflowActionResponse,
+)
 from app.schemas.validation import ValidationResult
 from app.services import analysis_service
+from app.services.analysis_explanation_service import build_explanation_payload
+from app.services.analysis_diff_service import build_analysis_diff
+from app.services.analysis_source_hash import compute_analysis_source_hash
 from app.services import policy_document_service
 from app.services.ai_service import AIService, get_ai_service
 from app.services.policy_service import PolicyService, get_policy_service, normalize_analysis_result
 from app.services import questionnaire_collection_service as qc
 from app.services import questionnaire_service
 from app.services import validation_service
+from app.services.policy_workflow_service import apply_workflow_action, get_workflow_state
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +138,65 @@ def put_questionnaire_response(
     return row
 
 
+@router.get(
+    "/{questionnaire_id}/workflow",
+    response_model=QuestionnaireWorkflowStateRead,
+)
+def get_questionnaire_workflow(
+    questionnaire_id: int,
+    db: Session = Depends(get_db),
+    role: Annotated[
+        Literal["security_analyst", "department_head", "approver"] | None,
+        Query(description="Роль для расчёта allowed_actions (MVP, без JWT)"),
+    ] = None,
+) -> QuestionnaireWorkflowStateRead:
+    code, body = get_workflow_state(db, questionnaire_id, for_role=role)
+    if code == "questionnaire_not_found":
+        raise HTTPException(status_code=404, detail="Questionnaire not found")
+    if code == "response_not_found":
+        raise HTTPException(status_code=404, detail="Questionnaire response not found")
+    assert body is not None
+    return body
+
+
+@router.post(
+    "/{questionnaire_id}/workflow/action",
+    response_model=WorkflowActionResponse,
+)
+def post_questionnaire_workflow_action(
+    questionnaire_id: int,
+    payload: WorkflowActionRequest,
+    db: Session = Depends(get_db),
+) -> WorkflowActionResponse:
+    logger.info(
+        "workflow action questionnaire_id=%s action=%s actor=%s role=%s",
+        questionnaire_id,
+        payload.action,
+        payload.actor,
+        payload.role,
+    )
+    code, details, resp = apply_workflow_action(db, questionnaire_id, payload)
+    if code == "questionnaire_not_found":
+        raise HTTPException(status_code=404, detail="Questionnaire not found")
+    if code == "response_not_found":
+        raise HTTPException(status_code=404, detail="Questionnaire response not found")
+    if code == "forbidden":
+        raise HTTPException(status_code=403, detail=details[0] if details else "Forbidden")
+    if code == "invalid":
+        raise HTTPException(
+            status_code=409,
+            detail=details[0] if details else "Invalid workflow transition",
+        )
+    assert resp is not None
+    logger.info(
+        "workflow action ok questionnaire_id=%s new_status=%s q_status=%s",
+        questionnaire_id,
+        resp.workflow_status,
+        resp.questionnaire_status,
+    )
+    return resp
+
+
 @router.post("/{questionnaire_id}/validate", response_model=ValidationResult)
 def validate_questionnaire_endpoint(
     questionnaire_id: int,
@@ -139,17 +215,156 @@ def validate_questionnaire_endpoint(
     "/{questionnaire_id}/analyze",
     response_model=QuestionnaireAnalyzeResponse,
 )
-def analyze_questionnaire_endpoint(
+async def analyze_questionnaire_endpoint(
     questionnaire_id: int,
     db: Session = Depends(get_db),
+    ai: AIService = Depends(get_ai_service),
 ) -> QuestionnaireAnalyzeResponse:
-    code, body = analysis_service.analyze_questionnaire(db, questionnaire_id)
+    code, body = await analysis_service.analyze_questionnaire(
+        db, questionnaire_id, ai=ai
+    )
     if code == "questionnaire_not_found":
         raise HTTPException(status_code=404, detail="Questionnaire not found")
     if code == "response_not_found":
         raise HTTPException(status_code=404, detail="Questionnaire response not found")
     assert body is not None
     return body
+
+
+@router.post(
+    "/{questionnaire_id}/explanation",
+    response_model=ExplanationPayload,
+)
+def post_questionnaire_explanation(
+    questionnaire_id: int,
+    payload: ExplanationRequest,
+    db: Session = Depends(get_db),
+) -> ExplanationPayload:
+    """
+    XAI MVP: собрать читаемое объяснение по уже сохранённому analysis_result
+    (без LLM и без изменения фактов анализа).
+    """
+    logger.info(
+        "explanation requested questionnaire_id=%s kind=%s risk_key=%s traceability_index=%s",
+        questionnaire_id,
+        payload.kind,
+        payload.risk_key,
+        payload.traceability_index,
+    )
+    if payload.kind == "risk" and not (payload.risk_key and payload.risk_key.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="For kind=risk, risk_key is required (e.g. asset:1|risk:IT_DATA_LEAK)",
+        )
+    if payload.kind == "traceability" and payload.traceability_index is None:
+        raise HTTPException(
+            status_code=400,
+            detail="For kind=traceability, traceability_index is required",
+        )
+
+    outcome, row, details = qc.get_questionnaire_response(db, questionnaire_id)
+    _http_for_collection(outcome, details, default_detail="Failed to load response")
+    assert row is not None
+
+    rd = row.response_data
+    data: dict[str, Any] = dict(rd) if isinstance(rd, dict) else {}
+    ar = data.get("analysis_result")
+    if not isinstance(ar, dict) or not ar:
+        raise HTTPException(
+            status_code=404,
+            detail="No analysis result for this questionnaire; run analyze first",
+        )
+    try:
+        report = AnalysisReport.model_validate(ar)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("explanation: invalid analysis_result: %s", e)
+        raise HTTPException(
+            status_code=404,
+            detail="Stored analysis result is invalid or incomplete",
+        ) from e
+
+    tm = report.traceability_map
+    if tm is None or len(tm.entries) == 0:
+        report = report.model_copy(
+            update={"traceability_map": analysis_service.build_traceability_map(report)},
+        )
+
+    built = build_explanation_payload(
+        kind=payload.kind,
+        response_data=data,
+        report=report,
+        risk_key=payload.risk_key.strip() if payload.risk_key else None,
+        traceability_index=payload.traceability_index,
+    )
+    if built is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Explanation target not found for the given key or index",
+        )
+
+    logger.info(
+        "explanation response questionnaire_id=%s kind=%s target_key=%s source=%s",
+        questionnaire_id,
+        built.kind,
+        built.target_key,
+        built.source,
+    )
+    return built
+
+
+@router.get(
+    "/{questionnaire_id}/analysis-diff",
+    response_model=QuestionnaireAnalysisDiffResponse,
+)
+def get_questionnaire_analysis_diff(
+    questionnaire_id: int,
+    db: Session = Depends(get_db),
+) -> QuestionnaireAnalysisDiffResponse:
+    """
+    Сравнение сохранённого analysis_result с rule-based пересчётом по текущему response_data
+    (без записи в БД и без вызова LLM). Для предпросмотра перед POST /analyze.
+    """
+    logger.info(
+        "analysis diff endpoint: questionnaire_id=%s",
+        questionnaire_id,
+    )
+    outcome, row, details = qc.get_questionnaire_response(db, questionnaire_id)
+    _http_for_collection(outcome, details, default_detail="Failed to load response")
+    assert row is not None
+
+    rd = row.response_data
+    data: dict[str, Any] = dict(rd) if isinstance(rd, dict) else {}
+    ar = data.get("analysis_result")
+    old_report: AnalysisReport | None = None
+    if isinstance(ar, dict) and ar:
+        try:
+            old_report = AnalysisReport.model_validate(ar)
+        except Exception:  # noqa: BLE001
+            old_report = None
+
+    new_report = analysis_service.build_analysis_report(data)
+    new_report = new_report.model_copy(
+        update={
+            "traceability_map": analysis_service.build_traceability_map(new_report),
+        },
+    )
+
+    diff_raw = build_analysis_diff(old_report, new_report)
+    diff = AnalysisDiffPayload.model_validate(diff_raw)
+
+    projected = compute_analysis_source_hash(data)
+    stored_hash: str | None = None
+    if old_report and old_report.analysis_meta is not None:
+        stored_hash = old_report.analysis_meta.source_hash
+
+    stale = bool(data.get("analysis_stale", False))
+
+    return QuestionnaireAnalysisDiffResponse(
+        analysis_stale=stale,
+        stored_source_hash=stored_hash,
+        projected_source_hash=projected,
+        diff=diff,
+    )
 
 
 @router.post(

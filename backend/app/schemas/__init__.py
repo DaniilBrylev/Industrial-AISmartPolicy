@@ -1,11 +1,22 @@
 """Pydantic-схемы для API и сервисов."""
 
 from app.schemas.analysis_report import (
+    AiAnalysisEnrichment,
+    AnalysisDiffPayload,
     AnalysisLinkItem,
+    AnalysisMeta,
     AnalysisReport,
     ClassifiedAssetItem,
+    ExplanationAssetRef,
+    ExplanationPayload,
+    ExplanationRequest,
+    NlpEntityItem,
+    NlpRelationItem,
+    QuestionnaireAnalysisDiffResponse,
     QuestionnaireAnalyzeResponse,
     RiskItem,
+    TraceabilityEntry,
+    TraceabilityMap,
 )
 from app.schemas.asset import AssetBase, AssetCreate, AssetRead, AssetUpdate
 from app.schemas.common import DeleteStatusResponse
@@ -20,6 +31,15 @@ from app.schemas.department import (
     DepartmentCreate,
     DepartmentRead,
     DepartmentUpdate,
+)
+from app.schemas.policy_workflow import (
+    QuestionnaireWorkflowStateRead,
+    WorkflowAction,
+    WorkflowActionRequest,
+    WorkflowActionResponse,
+    WorkflowLogEntry,
+    WorkflowRole,
+    WorkflowStatus,
 )
 from app.schemas.policy import (
     DiffChunk,
@@ -51,11 +71,22 @@ from app.schemas.questionnaire_collection import (
 from app.schemas.validation import ValidationIssue, ValidationResult
 
 __all__ = [
+    "AiAnalysisEnrichment",
+    "AnalysisDiffPayload",
     "AnalysisLinkItem",
+    "AnalysisMeta",
     "AnalysisReport",
     "ClassifiedAssetItem",
+    "ExplanationAssetRef",
+    "ExplanationPayload",
+    "ExplanationRequest",
+    "NlpEntityItem",
+    "NlpRelationItem",
+    "QuestionnaireAnalysisDiffResponse",
     "QuestionnaireAnalyzeResponse",
     "RiskItem",
+    "TraceabilityEntry",
+    "TraceabilityMap",
     "DeleteStatusResponse",
     "AssetBase",
     "AssetCreate",
@@ -80,6 +111,13 @@ __all__ = [
     "PolicyVersionRead",
     "PolicyVersionSummaryRead",
     "PolicyVersionUpdate",
+    "QuestionnaireWorkflowStateRead",
+    "WorkflowAction",
+    "WorkflowActionRequest",
+    "WorkflowActionResponse",
+    "WorkflowLogEntry",
+    "WorkflowRole",
+    "WorkflowStatus",
     "QuestionnairePolicyGenerateResponse",
     "QuestionnairePolicyVersioningInfo",
     "QuestionnaireBase",

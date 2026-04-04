@@ -13,6 +13,38 @@ function FieldLabel({ children }: { children: string }) {
   return <label className="fieldLabel">{children}</label>;
 }
 
+function OptBoolSelect({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: boolean | undefined;
+  onChange: (v: boolean | undefined) => void;
+  disabled?: boolean;
+}) {
+  const s = value === true ? "true" : value === false ? "false" : "";
+  return (
+    <div className="field">
+      <FieldLabel>{label}</FieldLabel>
+      <select
+        className="input"
+        value={s}
+        onChange={(e) => {
+          const v = e.target.value;
+          onChange(v === "" ? undefined : v === "true");
+        }}
+        disabled={disabled}
+      >
+        <option value="">— не задано</option>
+        <option value="true">да</option>
+        <option value="false">нет</option>
+      </select>
+    </div>
+  );
+}
+
 export function ResponseDataForm({ data, setData, disabled }: Props) {
   const setProfile = (patch: Partial<FormResponseData["department_profile"]>) => {
     setData((d) => ({
@@ -23,8 +55,11 @@ export function ResponseDataForm({ data, setData, disabled }: Props) {
 
   return (
     <div className="formSections">
-      <section className="panel">
-        <h3 className="panelTitle">Профиль подразделения</h3>
+      <section className="formSubSection">
+        <h3 className="cardTitle">Профиль подразделения</h3>
+        <p className="cardHint" style={{ marginTop: -6 }}>
+          Юридический контекст подразделения для политики и маршрутов согласования.
+        </p>
         <div className="fieldGrid">
           <div className="field">
             <FieldLabel>Описание</FieldLabel>
@@ -57,10 +92,11 @@ export function ResponseDataForm({ data, setData, disabled }: Props) {
         </div>
       </section>
 
-      <section className="panel">
-        <h3 className="panelTitle">Активы</h3>
-        <p className="hint">
-          Поля: id, наименование, тип, владелец, критичность (low / medium / high / critical).
+      <section className="formSubSection">
+        <h3 className="cardTitle">Активы</h3>
+        <p className="cardHint" style={{ marginTop: -6 }}>
+          IT и OT активы. Для промышленного контура заполните зону, протоколы, MFA/патчинг и safety-critical — это
+          влияет на OT-ограничения и компенсирующие меры в анализе.
         </p>
         {data.assets.map((row, idx) => (
           <div key={idx} className="repeatBlock">
@@ -163,6 +199,105 @@ export function ResponseDataForm({ data, setData, disabled }: Props) {
                   ))}
                 </select>
               </div>
+              <div className="field">
+                <FieldLabel>Сетевая зона (OT)</FieldLabel>
+                <input
+                  className="input"
+                  placeholder="напр. ot_production_vlan20"
+                  value={row.network_zone ?? ""}
+                  onChange={(e) =>
+                    setData((d) => {
+                      const next = [...d.assets];
+                      next[idx] = { ...next[idx], network_zone: e.target.value };
+                      return { ...d, assets: next };
+                    })
+                  }
+                  disabled={disabled}
+                />
+              </div>
+              <div className="field">
+                <FieldLabel>Производитель</FieldLabel>
+                <input
+                  className="input"
+                  value={row.vendor ?? ""}
+                  onChange={(e) =>
+                    setData((d) => {
+                      const next = [...d.assets];
+                      next[idx] = { ...next[idx], vendor: e.target.value };
+                      return { ...d, assets: next };
+                    })
+                  }
+                  disabled={disabled}
+                />
+              </div>
+              <div className="field">
+                <FieldLabel>Протоколы</FieldLabel>
+                <input
+                  className="input"
+                  placeholder="Modbus, OPC UA, Profinet…"
+                  value={row.protocols ?? ""}
+                  onChange={(e) =>
+                    setData((d) => {
+                      const next = [...d.assets];
+                      next[idx] = { ...next[idx], protocols: e.target.value };
+                      return { ...d, assets: next };
+                    })
+                  }
+                  disabled={disabled}
+                />
+              </div>
+              <div className="field">
+                <FieldLabel>Класс доступности</FieldLabel>
+                <input
+                  className="input"
+                  placeholder="low / medium / high / critical"
+                  value={row.availability_class ?? ""}
+                  onChange={(e) =>
+                    setData((d) => {
+                      const next = [...d.assets];
+                      next[idx] = { ...next[idx], availability_class: e.target.value };
+                      return { ...d, assets: next };
+                    })
+                  }
+                  disabled={disabled}
+                />
+              </div>
+              <OptBoolSelect
+                label="Поддержка MFA на устройстве"
+                value={row.supports_mfa}
+                disabled={disabled}
+                onChange={(v) =>
+                  setData((d) => {
+                    const next = [...d.assets];
+                    next[idx] = { ...next[idx], supports_mfa: v };
+                    return { ...d, assets: next };
+                  })
+                }
+              />
+              <OptBoolSelect
+                label="Возможен регулярный патчинг"
+                value={row.supports_patching}
+                disabled={disabled}
+                onChange={(v) =>
+                  setData((d) => {
+                    const next = [...d.assets];
+                    next[idx] = { ...next[idx], supports_patching: v };
+                    return { ...d, assets: next };
+                  })
+                }
+              />
+              <OptBoolSelect
+                label="Safety-critical (АСУ ТП)"
+                value={row.safety_critical}
+                disabled={disabled}
+                onChange={(v) =>
+                  setData((d) => {
+                    const next = [...d.assets];
+                    next[idx] = { ...next[idx], safety_critical: v };
+                    return { ...d, assets: next };
+                  })
+                }
+              />
             </div>
           </div>
         ))}
@@ -181,6 +316,10 @@ export function ResponseDataForm({ data, setData, disabled }: Props) {
                     asset_type: "",
                     owner: "",
                     criticality: "medium",
+                    network_zone: "",
+                    vendor: "",
+                    protocols: "",
+                    availability_class: "",
                   },
                 ],
               }))
@@ -191,9 +330,11 @@ export function ResponseDataForm({ data, setData, disabled }: Props) {
         )}
       </section>
 
-      <section className="panel">
-        <h3 className="panelTitle">Бизнес-процессы</h3>
-        <p className="hint">Используемые активы — id через запятую (used_asset_ids).</p>
+      <section className="formSubSection">
+        <h3 className="cardTitle">Бизнес-процессы</h3>
+        <p className="cardHint" style={{ marginTop: -6 }}>
+          Связь процессов с активами: укажите id активов через запятую — это влияет на классификацию и explainability.
+        </p>
         {data.business_processes.map((row, idx) => (
           <div key={idx} className="repeatBlock">
             <div className="repeatBlockHead">
@@ -287,8 +428,11 @@ export function ResponseDataForm({ data, setData, disabled }: Props) {
         onChange={(rows) => setData((d) => ({ ...d, incidents: rows }))}
       />
 
-      <section className="panel">
-        <h3 className="panelTitle">Дополнительные заметки</h3>
+      <section className="formSubSection">
+        <h3 className="cardTitle">Дополнительные заметки</h3>
+        <p className="cardHint" style={{ marginTop: -6 }}>
+          Свободный текст; может учитываться NLP и резюме в AI enrichment.
+        </p>
         <textarea
           className="input inputTextarea"
           rows={4}
@@ -311,9 +455,11 @@ type PairProps = {
 
 function PairSection({ title, hint, rows, disabled, onChange }: PairProps) {
   return (
-    <section className="panel">
-      <h3 className="panelTitle">{title}</h3>
-      <p className="hint">{hint}</p>
+    <section className="formSubSection">
+      <h3 className="cardTitle">{title}</h3>
+      <p className="cardHint" style={{ marginTop: -6 }}>
+        {hint}
+      </p>
       {rows.map((row, idx) => (
         <div key={idx} className="repeatBlock">
           <div className="repeatBlockHead">

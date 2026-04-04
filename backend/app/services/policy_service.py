@@ -92,6 +92,9 @@ def normalize_analysis_result(raw: Any) -> dict[str, Any]:
             "measures",
             "links",
             "warnings",
+            "ai_enrichment",
+            "traceability_map",
+            "analysis_meta",
         ):
             if k in rep:
                 base[k] = rep[k]
