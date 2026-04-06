@@ -511,6 +511,9 @@ table.dataTable {
 }
 
 .workspaceToolbar .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: var(--radius-sm);
   font-weight: 500;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
@@ -699,4 +702,59 @@ table.dataTable {
 .xaiModal {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
+}
+
+@keyframes workspaceSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.activitySpinner {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid rgba(30, 74, 123, 0.2);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: workspaceSpin 0.7s linear infinite;
+}
+
+.btnSpinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin-right: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: workspaceSpin 0.7s linear infinite;
+  display: inline-block;
+  vertical-align: -2px;
+}
+
+.btn.btnSecondary .btnSpinner {
+  border-color: rgba(30, 74, 123, 0.22);
+  border-top-color: var(--color-primary);
+}
+
+.workspaceActivityStrip {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: linear-gradient(135deg, #e8f0fa 0%, #f4f7fb 100%);
+  border: 1px solid #b8cce0;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 500;
+  color: var(--color-primary);
+}
+
+.workspaceActivityStrip strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
 }

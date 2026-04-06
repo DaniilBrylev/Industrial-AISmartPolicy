@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { WORKSPACE_TABS, type WorkspaceTabId } from "./tabs";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 import type { QuestionnaireRead, QuestionnaireWorkflowStateRead } from "@/shared/api/types";
+import type { LongRunningQuestionnaireOp } from "./longRunning";
 
 type Props = {
   tab: WorkspaceTabId;
@@ -21,6 +22,7 @@ type Props = {
   onGeneratePolicy: () => void;
   onDownloadDocx: () => void;
   diffLoading: boolean;
+  longRunningOp: LongRunningQuestionnaireOp | null;
   panels: Record<WorkspaceTabId, ReactNode>;
 };
 
@@ -42,6 +44,7 @@ export function QuestionnaireWorkspace({
   onGeneratePolicy,
   onDownloadDocx,
   diffLoading,
+  longRunningOp,
   panels,
 }: Props) {
   return (
@@ -62,6 +65,7 @@ export function QuestionnaireWorkspace({
         onGeneratePolicy={onGeneratePolicy}
         onDownloadDocx={onDownloadDocx}
         diffLoading={diffLoading}
+        longRunningOp={longRunningOp}
       />
       <nav className="tabBar" aria-label="Разделы анкеты">
         {WORKSPACE_TABS.map((t) => (

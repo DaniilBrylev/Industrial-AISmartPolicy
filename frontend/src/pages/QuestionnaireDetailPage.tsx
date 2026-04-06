@@ -12,6 +12,7 @@ import { PolicySection } from "@/features/questionnaire/workspace/PolicySection"
 import { QuestionnaireWorkspace } from "@/features/questionnaire/workspace/QuestionnaireWorkspace";
 import { WorkflowSection } from "@/features/questionnaire/workspace/WorkflowSection";
 import { XaiSection } from "@/features/questionnaire/workspace/XaiSection";
+import type { LongRunningQuestionnaireOp } from "@/features/questionnaire/workspace/longRunning";
 import type { WorkspaceTabId } from "@/features/questionnaire/workspace/tabs";
 import {
   emptyFormResponseData,
@@ -79,6 +80,7 @@ export function QuestionnaireDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [longRunOp, setLongRunOp] = useState<LongRunningQuestionnaireOp | null>(null);
 
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [analyzeResult, setAnalyzeResult] = useState<QuestionnaireAnalyzeResponse | null>(null);
@@ -245,6 +247,7 @@ export function QuestionnaireDetailPage() {
   async function onAnalyze() {
     if (!Number.isFinite(id) || id < 1) return;
     setBusy(true);
+    setLongRunOp("analyze");
     setActionMsg(null);
     try {
       const r = await analyzeQuestionnaire(id);
@@ -260,6 +263,7 @@ export function QuestionnaireDetailPage() {
       setActionMsg(formatApiError(e));
     } finally {
       setBusy(false);
+      setLongRunOp(null);
     }
   }
 
@@ -331,6 +335,7 @@ export function QuestionnaireDetailPage() {
   async function onGeneratePolicy() {
     if (!Number.isFinite(id) || id < 1) return;
     setBusy(true);
+    setLongRunOp("generate_policy");
     setActionMsg(null);
     try {
       const pid = policyDocId.trim() ? Number(policyDocId.trim()) : undefined;
@@ -346,6 +351,7 @@ export function QuestionnaireDetailPage() {
       setActionMsg(formatApiError(e));
     } finally {
       setBusy(false);
+      setLongRunOp(null);
     }
   }
 
@@ -424,6 +430,7 @@ export function QuestionnaireDetailPage() {
             onGeneratePolicy={() => void onGeneratePolicy()}
             onDownloadDocx={() => void onDownloadDocx()}
             diffLoading={diffLoading}
+            longRunningOp={longRunOp}
             panels={{
               data: (
                 <>

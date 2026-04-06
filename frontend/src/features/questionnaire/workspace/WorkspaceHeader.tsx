@@ -1,4 +1,5 @@
 import type { QuestionnaireRead, QuestionnaireWorkflowStateRead } from "@/shared/api/types";
+import type { LongRunningQuestionnaireOp } from "./longRunning";
 
 const WF_LABEL: Record<string, string> = {
   draft: "Черновик",
@@ -24,6 +25,7 @@ type Props = {
   onGeneratePolicy: () => void;
   onDownloadDocx: () => void;
   diffLoading: boolean;
+  longRunningOp: LongRunningQuestionnaireOp | null;
 };
 
 export function WorkspaceHeader({
@@ -42,11 +44,14 @@ export function WorkspaceHeader({
   onGeneratePolicy,
   onDownloadDocx,
   diffLoading,
+  longRunningOp,
 }: Props) {
   const wf = workflowState?.workflow_status;
+  const analyzing = longRunningOp === "analyze";
+  const generatingPolicy = longRunningOp === "generate_policy";
 
   return (
-    <header className="workspaceHeader">
+    <header className="workspaceHeader" aria-busy={Boolean(longRunningOp)}>
       <div className="workspaceHeaderTop">
         <div className="workspaceTitleBlock">
           <h1>{q.title}</h1>
@@ -82,7 +87,14 @@ export function WorkspaceHeader({
           Проверить
         </button>
         <button type="button" className="btn btnSecondary" disabled={busy} onClick={onAnalyze}>
-          Анализировать
+          {analyzing ? (
+            <>
+              <span className="btnSpinner" aria-hidden />
+              Анализ…
+            </>
+          ) : (
+            "Анализировать"
+          )}
         </button>
         <button
           type="button"
@@ -93,12 +105,39 @@ export function WorkspaceHeader({
           {diffLoading ? "Diff…" : "Показать diff"}
         </button>
         <button type="button" className="btn btnPrimary" disabled={busy} onClick={onGeneratePolicy}>
-          Сгенерировать политику
+          {generatingPolicy ? (
+            <>
+              <span className="btnSpinner" aria-hidden />
+              Генерация…
+            </>
+          ) : (
+            "Сгенерировать политику"
+          )}
         </button>
         <button type="button" className="btn btnSecondary" disabled={busy} onClick={onDownloadDocx}>
           Скачать DOCX
         </button>
       </div>
+      {longRunningOp && (
+        <div className="workspaceActivityStrip" role="status" aria-live="polite" aria-atomic="true">
+          <span className="activitySpinner" aria-hidden />
+          <div>
+            {longRunningOp === "analyze" ? (
+              <>
+                <strong>Выполняется анализ</strong>
+                Идёт обработка данных (риски, связи и анализ с помощью ИИ). Это может занять от нескольких секунд до 60 минут.
+                Страница не зависла: дождитесь завершения.
+                Не обновляйте страницу.
+              </>
+            ) : (
+              <>
+                <strong>Генерируется политика</strong>
+                Сервер формирует текст и DOCX. При использовании ИИ это может занять до 10 минут.
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
